@@ -1,0 +1,559 @@
+---
+alwaysApply: true
+---
+
+# PDR — Cross‑platform URL→Image NuGet Package (.NET 9 + Playwright) called Url2Image
+
+## 1) One‑pager / TL;DR
+
+**Goal:** A tiny, DI‑friendly .NET 9 library that turns any URL into a full‑page PNG/JPEG screenshot, running on Windows, Linux, and macOS with zero custom code from consumers beyond calling one method. Uses **Microsoft.Playwright** under the hood. Default output is **full‑page PNG**. JPEG (with quality) supported. Returns a **Stream** (plus helpers to save to disk). Designed for **web apps** (ASP.NET Core minimal APIs/MVC) and **server‑side services**.
+
+**Package working title:** `Url2Image` (rename anytime).
+
+**Key points**
+
+* Minimal public API; single injectable service `IUrlScreenshotService`.
+* Full‑page capture (`FullPage=true`) by default.
+* No paid / restrictive licenses: depends only on **Microsoft.Playwright** (Apache‑2.0) and BCL.
+* Sensible defaults (1366px viewport, device scale 1.0, `domcontentloaded` wait), override via options.
+* Browser/process reuse for performance; new isolated **context** per capture for safety.
+* Optional **auto‑install** of Playwright browsers at startup (see §6 + README). On some Linux hosts, system packages may be required by Playwright—documented clearly.
+
+---
+
+## 2) Success criteria (acceptance)
+
+1. **API simplicity:** One method required to get a screenshot: `CaptureAsync(url)` → `Stream`.
+2. **Formats:** PNG and JPEG (quality 1–100). PNG is default.
+3. **Full‑page:** Entire document height captured out‑of‑the‑box.
+4. **Cross‑platform:** Works on Windows, Linux, macOS (.NET 9). Playwright browsers downloadable at build/startup.
+5. **Web‑app ready:** Example ASP.NET Core app shows an endpoint returning the image.
+6. **Packaging:** `dotnet pack` produces a NuGet with README, XML docs, symbols; consumers can `dotnet add package` and go.
+7. **Docs:** README lists any additional steps (e.g., Playwright browsers install, Linux deps) and includes copy‑paste samples.
+
+**Non‑goals (v1):**
+
+* PDF rendering, mobile device screenshots, authenticated flows, auto‑scrolling infinite pages, proxy/rotation, blocking trackers, or screenshot diffing.
+
+---
+
+## 3) Public API (v1)
+
+```csharp
+namespace Url2Image;
+
+public interface IUrlScreenshotService
+{
+    Task<Stream> CaptureAsync(
+        string url,
+        ScreenshotOptions? options = null,
+        CancellationToken ct = default);
+
+    Task SaveToFileAsync(
+        string url,
+        string filePath,
+        ScreenshotOptions? options = null,
+        CancellationToken ct = default);
+
+    Task<byte[]> CaptureBytesAsync(
+        string url,
+        ScreenshotOptions? options = null,
+        CancellationToken ct = default);
+}
+
+public sealed record ScreenshotOptions
+(
+    ImageFormat Format = ImageFormat.Png,
+    int? JpegQuality = 80,
+    int ViewportWidth = 1366,
+    int? ViewportHeight = null,
+    float DeviceScaleFactor = 1.0f,
+    TimeSpan? NavigationTimeout = null,
+    ScreenshotWaitUntil WaitUntil = ScreenshotWaitUntil.DomContentLoaded,
+    bool FullPage = true,
+    bool DisableAnimations = true,
+    string? UserAgent = null
+);
+
+public enum ImageFormat { Png, Jpeg }
+
+public enum ScreenshotWaitUntil { Load, DomContentLoaded, NetworkIdle }
+
+public static class ServiceCollectionExtensions
+{
+    public static IServiceCollection AddUrl2Image(
+        this IServiceCollection services,
+        Action<Url2ImageOptions>? configure = null);
+}
+
+public sealed class Url2ImageOptions
+{
+    // Install browsers at application startup (recommended in CI/containers)
+    public bool AutoInstallBrowsersOnStartup { get; set; } = false;
+
+    // Which browser to use; default Chromium
+    public string BrowserChannel { get; set; } = "chromium"; // "chrome" supported if available
+
+    // Maximum parallel contexts; null = unlimited (Playwright will queue internally)
+    public int? MaxConcurrency { get; set; } = null;
+}
+```
+
+---
+
+## 4) Implementation sketch
+
+* **Lifetime:** Register `IUrlScreenshotService` as **Singleton**. Internally, create a single `IBrowser` lazily; create a new `IBrowserContext` + `IPage` per request. Dispose the context/page after capture.
+* **Installer (optional):** If `AutoInstallBrowsersOnStartup==true`, run `Microsoft.Playwright.Program.Main(["install","--with-deps", options.BrowserChannel])` on app start (ignore `--with-deps` on non‑Linux). Fall back gracefully if the process is not permitted.
+* **Navigation defaults:** `GotoAsync(url, WaitUntil = DomContentLoaded, Timeout = 30s if not specified)`. Optionally support `NetworkIdle` via enum.
+* **Styling stabilization:** If `DisableAnimations`, inject a style tag to pause animations/transitions and wait for `document.fonts.ready`.
+* **Screenshot:** `page.ScreenshotAsync(new() { FullPage = options.FullPage, Type = png/jpeg, Quality = jpeg?options.JpegQuality:null })` into a pooled `MemoryStream`.
+* **Viewport:** Use context options with `ViewportSize` (Width x (Height ?? 1080)), `DeviceScaleFactor`.
+* **Headers:** If `UserAgent` set, apply. Optionally add `Accept-Language: en-GB` by default (omit for v1).
+* **Error handling:**
+
+  * Invalid URL → `ArgumentException`.
+  * Navigation timeout → `TimeoutException` (include URL in message, redacted query).
+  * Protocol errors → wrap as `ScreenshotException` with original Playwright message.
+
+**Threading:** contexts can be created concurrently; browser instance protected by a `SemaphoreSlim` only for lazy init. Optionally add a `Channel`/`SemaphoreSlim` limiter when `MaxConcurrency` set.
+
+---
+
+## 5) Security & safety
+
+* **SSRF guard:** (doc note) Consumers should validate/whitelist outbound URLs if exposing as an HTTP API.
+* **Protocol allow‑list:** Disallow `file:`/`data:`/`chrome:` schemes; only `http/https`.
+* **Resource caps:** Navigation timeout default 30s; consider max page size/height guard in v1.1.
+* **Sandboxing:** In containers, run as non‑root. On Linux base images provide recommended OS deps.
+
+---
+
+## 6) Dependencies & licensing
+
+* **Only dependency:** `Microsoft.Playwright` (Apache‑2.0). Package license for this library: **MIT**.
+* **Browser binaries:** Downloaded by Playwright per project. The package offers optional auto‑install at startup; otherwise users can run the Playwright install script (see README).
+* **Linux system deps:** Some Linux hosts require system packages for headless Chromium/WebKit. README provides recipes.
+
+---
+
+## 7) Example usage (ASP.NET Core minimal API)
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddUrl2Image(o =>
+{
+    o.AutoInstallBrowsersOnStartup = true; // optional but handy in containers
+});
+
+var app = builder.Build();
+
+app.MapGet("/screenshot", async (
+    [FromQuery] string url,
+    [FromQuery] string? fmt,
+    IUrlScreenshotService svc,
+    CancellationToken ct) =>
+{
+    var format = string.Equals(fmt, "jpg", StringComparison.OrdinalIgnoreCase)
+        ? ImageFormat.Jpeg : ImageFormat.Png;
+
+    await using var stream = await svc.CaptureAsync(url,
+        new ScreenshotOptions(Format: format), ct);
+
+    var contentType = format == ImageFormat.Png ? "image/png" : "image/jpeg";
+    return Results.File(stream, contentType);
+});
+
+await app.RunAsync();
+```
+
+---
+
+## 8) Internal code (library)
+
+**`Url2Image.csproj`**
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Description>URL→Image (full‑page) screenshots for .NET 9 using Playwright. Simple DI service returning PNG/JPEG as Stream.</Description>
+    <PackageId>Url2Image</PackageId>
+    <PackageVersion>1.0.0</PackageVersion>
+    <Authors>Your Name</Authors>
+    <RepositoryUrl>https://github.com/yourorg/Url2Image</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Playwright" Version="1.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>
+```
+
+**`ServiceCollectionExtensions.cs`**
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Url2Image;
+
+public static class ServiceCollectionExtensions
+{
+    public static IServiceCollection AddUrl2Image(
+        this IServiceCollection services,
+        Action<Url2ImageOptions>? configure = null)
+    {
+        var opts = new Url2ImageOptions();
+        configure?.Invoke(opts);
+        services.AddSingleton(opts);
+        services.AddSingleton<IUrlScreenshotService, UrlScreenshotService>();
+        return services;
+    }
+}
+```
+
+**`UrlScreenshotService.cs`**
+
+```csharp
+using Microsoft.Playwright;
+using System.Buffers;
+using System.Runtime.CompilerServices;
+
+namespace Url2Image;
+
+internal sealed class UrlScreenshotService : IUrlScreenshotService, IAsyncDisposable
+{
+    private readonly Url2ImageOptions _options;
+    private readonly SemaphoreSlim _initLock = new(1,1);
+    private IPlaywright? _playwright;
+    private IBrowser? _browser;
+    private bool _initialized;
+
+    public UrlScreenshotService(Url2ImageOptions options)
+        => _options = options;
+
+    public async Task<Stream> CaptureAsync(
+        string url,
+        ScreenshotOptions? options = null,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(url);
+        EnsureHttpOrHttps(url);
+        options ??= new();
+
+        await EnsureInitializedAsync(ct).ConfigureAwait(false);
+
+        // New isolated context per capture
+        var context = await _browser!.NewContextAsync(new()
+        {
+            ViewportSize = new() { Width = options.ViewportWidth, Height = options.ViewportHeight ?? 1080 },
+            DeviceScaleFactor = options.DeviceScaleFactor,
+            UserAgent = options.UserAgent
+        }).ConfigureAwait(false);
+
+        try
+        {
+            var page = await context.NewPageAsync().ConfigureAwait(false);
+
+            await page.GotoAsync(url, new PageGotoOptions
+            {
+                WaitUntil = options.WaitUntil switch
+                {
+                    ScreenshotWaitUntil.Load => WaitUntilState.Load,
+                    ScreenshotWaitUntil.NetworkIdle => WaitUntilState.NetworkIdle,
+                    _ => WaitUntilState.DOMContentLoaded
+                },
+                Timeout = (float?)(options.NavigationTimeout ?? TimeSpan.FromSeconds(30)).TotalMilliseconds
+            }).ConfigureAwait(false);
+
+            if (options.DisableAnimations)
+            {
+                await page.AddStyleTagAsync(new() { Content = "*{animation:none!important;transition:none!important}" }).ConfigureAwait(false);
+                await page.EvaluateAsync("() => document.fonts ? document.fonts.ready : Promise.resolve()")
+                          .ConfigureAwait(false);
+            }
+
+            var mem = new MemoryStream(capacity: 64 * 1024);
+            await page.ScreenshotAsync(new PageScreenshotOptions
+            {
+                FullPage = options.FullPage,
+                Type = options.Format == ImageFormat.Jpeg ? ScreenshotType.Jpeg : ScreenshotType.Png,
+                Quality = options.Format == ImageFormat.Jpeg ? options.JpegQuality : null,
+                Path = null
+            }, new() { })
+            .ContinueWith(t =>
+            {
+                if (t.IsCompletedSuccessfully)
+                {
+                    var bytes = t.Result;
+                    mem.Write(bytes, 0, bytes.Length);
+                    mem.Position = 0;
+                }
+                else if (t.IsFaulted && t.Exception is not null)
+                {
+                    throw t.Exception.GetBaseException();
+                }
+            }, ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Current)
+            .ConfigureAwait(false);
+
+            return mem;
+        }
+        finally
+        {
+            await context.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    public async Task<byte[]> CaptureBytesAsync(string url, ScreenshotOptions? options = null, CancellationToken ct = default)
+    {
+        await using var s = await CaptureAsync(url, options, ct).ConfigureAwait(false);
+        return ((MemoryStream)s).ToArray();
+    }
+
+    public async Task SaveToFileAsync(string url, string filePath, ScreenshotOptions? options = null, CancellationToken ct = default)
+    {
+        await using var s = await CaptureAsync(url, options, ct).ConfigureAwait(false);
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+        await using var fs = File.Create(filePath);
+        await s.CopyToAsync(fs, ct).ConfigureAwait(false);
+    }
+
+    private async Task EnsureInitializedAsync(CancellationToken ct)
+    {
+        if (_initialized) return;
+        await _initLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_initialized) return;
+
+            if (_options.AutoInstallBrowsersOnStartup)
+            {
+                try
+                {
+                    // Best‑effort install (ignored if not permitted / already installed)
+                    _ = Microsoft.Playwright.Program.Main(new[] { "install", _options.BrowserChannel });
+                }
+                catch { /* ignore */ }
+            }
+
+            _playwright = await Playwright.CreateAsync().ConfigureAwait(false);
+            _browser = await _playwright[_options.BrowserChannel switch
+            {
+                "firefox" => (Func<IPlaywright, Task<IBrowser>>)(p => p.Firefox.LaunchAsync(new() { Headless = true })),
+                "webkit" => p => p.Webkit.LaunchAsync(new() { Headless = true }),
+                _ => p => p.Chromium.LaunchAsync(new() { Headless = true })
+            }](_playwright).ConfigureAwait(false);
+
+            _initialized = true;
+        }
+        finally
+        {
+            _initLock.Release();
+        }
+    }
+
+    private static void EnsureHttpOrHttps(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps))
+            throw new ArgumentException("Only http/https URLs are supported.", nameof(url));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_browser is not null) await _browser.DisposeAsync();
+        _playwright?.Dispose();
+        _initLock.Dispose();
+    }
+}
+```
+
+> Note: above uses the in‑memory bytes returned by `Page.ScreenshotAsync` (available in modern Playwright .NET) instead of writing to disk.
+
+---
+
+## 9) README (ship with NuGet)
+
+**README.md (full text)**
+
+````md
+# Url2Image — URL → Full‑page PNG/JPEG for .NET 9
+
+Tiny DI‑friendly service that turns any **URL** into a **full‑page screenshot** using [Microsoft.Playwright]. Works on Windows, Linux, macOS. Default **PNG**, optional **JPEG** with quality. Returns a **Stream** with helpers to save to disk.
+
+## Install
+```bash
+dotnet add package Url2Image
+````
+
+> **Heads‑up about Playwright browsers**
+>
+> Playwright requires browser binaries. This package can **auto‑install** them at app startup (recommended in containers) *or* you can install them once for your app using the Playwright script. See **Setup** below.
+
+## Quick start (ASP.NET Core minimal API)
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddUrl2Image(o => o.AutoInstallBrowsersOnStartup = true); // optional
+
+var app = builder.Build();
+
+app.MapGet("/shot", async (string url, IUrlScreenshotService svc) =>
+{
+    await using var png = await svc.CaptureAsync(url);
+    return Results.File(png, "image/png");
+});
+
+await app.RunAsync();
+```
+
+## API
+
+```csharp
+Task<Stream> CaptureAsync(string url, ScreenshotOptions? options = null, CancellationToken ct = default);
+Task SaveToFileAsync(string url, string filePath, ScreenshotOptions? options = null, CancellationToken ct = default);
+Task<byte[]> CaptureBytesAsync(string url, ScreenshotOptions? options = null, CancellationToken ct = default);
+```
+
+### ScreenshotOptions
+
+* `Format`: `Png` (default) or `Jpeg`
+* `JpegQuality`: 1–100 (only for JPEG; default 80)
+* `ViewportWidth`: default 1366
+* `ViewportHeight`: default 1080 (full‑page capture ignores height for final image)
+* `DeviceScaleFactor`: default 1.0 (use >1 for sharper text)
+* `NavigationTimeout`: default 30s
+* `WaitUntil`: `DomContentLoaded` (default) | `Load` | `NetworkIdle`
+* `FullPage`: default true
+* `DisableAnimations`: default true
+* `UserAgent`: optional string
+
+## Setup
+
+You have two options. **Pick one**:
+
+**A) Auto‑install on app startup (recommended in containers/CI)**
+
+```csharp
+builder.Services.AddUrl2Image(o => o.AutoInstallBrowsersOnStartup = true);
+```
+
+This triggers a best‑effort Playwright install for Chromium. Requires network/file system access on first run.
+
+**B) Install browsers once per project (no code)**
+Run after adding the NuGet (replace `net9.0` with your TFM if different):
+
+```powershell
+pwsh bin/Debug/net9.0/playwright.ps1 install
+```
+
+### Linux notes
+
+On Debian/Ubuntu‑based hosts you may also need OS packages (fonts, NSS, etc.). You can install both **browsers and OS deps** with:
+
+```bash
+pwsh bin/Debug/net9.0/playwright.ps1 install --with-deps
+```
+
+In Docker, base from `mcr.microsoft.com/dotnet/aspnet:9.0-jammy` and consider:
+
+```dockerfile
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-jammy
+WORKDIR /app
+COPY ./publish .
+# Install Playwright browsers + deps into the container layer
+RUN pwsh -NoProfile ./playwright.ps1 install --with-deps chromium || true
+ENTRYPOINT ["dotnet","YourApp.dll"]
+```
+
+## Example endpoint with JPEG
+
+```csharp
+app.MapGet("/shot.jpg", async (string url, IUrlScreenshotService svc) =>
+{
+    var opts = new ScreenshotOptions(Format: ImageFormat.Jpeg, JpegQuality: 85);
+    var jpg = await svc.CaptureBytesAsync(url, opts);
+    return Results.File(jpg, "image/jpeg");
+});
+```
+
+## Gotchas / Tips
+
+* **Huge pages** → Full‑page PNGs can be large. Prefer JPEG for very long pages or downscale via `DeviceScaleFactor`.
+* **Flaky pages** → Try `WaitUntil = NetworkIdle` or increase `NavigationTimeout`.
+* **Security** → Validate/whitelist input URLs if exposing this as a public API.
+* **Headful vs headless** → This library uses headless by default.
+
+## License
+
+* Library: **MIT**
+* Dependency: `Microsoft.Playwright` — **Apache‑2.0**
+
+```
+
+---
+
+## 10) Example solution layout
+```
+
+/Url2Image
+/src/Url2Image
+Url2Image.csproj
+README.md
+IUrlScreenshotService.cs
+Url2ImageOptions.cs
+ServiceCollectionExtensions.cs
+UrlScreenshotService.cs
+/samples/WebApi
+WebApi.csproj
+Program.cs
+
+```
+
+---
+
+## 11) Build & pack
+- Build: `dotnet build -c Release`
+- Pack: `dotnet pack src/Url2Image -c Release`
+- Push: `dotnet nuget push src/Url2Image/bin/Release/Url2Image.*.nupkg -k <API_KEY> -s https://api.nuget.org/v3/index.json`
+
+---
+
+## 12) Testing plan
+- Unit: options mapping, URL validation, exception wrapping.
+- Integration (Windows, Linux container): capture well‑known pages; assert format/byte headers.
+- Performance: warm vs cold timings; parallel 10× captures; memory profile.
+- Smoke in CI: run minimal API; hit `/screenshot?url=...` and verify bytes start with PNG/JPEG signatures.
+
+---
+
+## 13) Roadmap (post‑v1)
+- Custom viewport height/width for non full‑page; PDF export.
+- Device profiles (mobile emulation), per‑request cookies/headers.
+- Proxy support, request blocking lists.
+- Optional **auto‑scroll** for infinite pages with max cap.
+- WebP/AVIF formats where supported.
+
+---
+
+## 14) Risks & mitigations
+- **Playwright browsers not present** → Auto‑install option + clear README steps.
+- **Linux dependencies missing** → Document `--with-deps` and provide Docker recipe.
+- **Very long pages → huge images** → Encourage JPEG, add max‑height guard in 1.1.
+- **CI/Locked‑down environments** → Allow preinstall step; don’t hard‑fail if auto‑install denied.
+
+---
+
+**End of PDR.**
+
+```

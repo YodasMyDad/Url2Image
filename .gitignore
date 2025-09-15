@@ -1,0 +1,8 @@
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+/.idea/*
+/nupkgs/*
+/src/Url2Image.Web/wwwroot/images/*
