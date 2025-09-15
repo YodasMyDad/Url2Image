@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using System.Text.Json;
 using Url2Image;
 
 namespace Url2Image.Web.Pages;
@@ -15,7 +16,7 @@ public class IndexModel(IUrlScreenshotService screenshotService, IWebHostEnviron
 
     public void OnGet()
     {
-        AreBrowsersInstalled = screenshotService.AreBrowsersInstalled;
+        AreBrowsersInstalled = UrlScreenshotService.AreBrowsersInstalledStatic();
     }
 
     public async Task<IActionResult> OnPostAsync()
@@ -23,7 +24,7 @@ public class IndexModel(IUrlScreenshotService screenshotService, IWebHostEnviron
         if (!ModelState.IsValid || string.IsNullOrWhiteSpace(Url))
         {
             ModelState.AddModelError(string.Empty, "Please enter a valid URL.");
-            AreBrowsersInstalled = screenshotService.AreBrowsersInstalled;
+            AreBrowsersInstalled = UrlScreenshotService.AreBrowsersInstalledStatic();
             return Page();
         }
 
@@ -37,7 +38,8 @@ public class IndexModel(IUrlScreenshotService screenshotService, IWebHostEnviron
             }
 
             // Create images directory if it doesn't exist
-            var imagesPath = Path.Combine(environment.WebRootPath, "images");
+            var webRootPath = environment.WebRootPath ?? Path.Combine(environment.ContentRootPath, "wwwroot");
+            var imagesPath = Path.Combine(webRootPath, "images");
             Directory.CreateDirectory(imagesPath);
 
             // Generate unique filename
@@ -55,7 +57,7 @@ public class IndexModel(IUrlScreenshotService screenshotService, IWebHostEnviron
             ModelState.AddModelError(string.Empty, $"Failed to capture screenshot: {ex.Message}");
         }
 
-        AreBrowsersInstalled = screenshotService.AreBrowsersInstalled;
+        AreBrowsersInstalled = UrlScreenshotService.AreBrowsersInstalledStatic();
         return Page();
     }
 }

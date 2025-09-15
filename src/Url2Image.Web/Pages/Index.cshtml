@@ -24,7 +24,8 @@
 
             <div class="card">
                 <div class="card-body">
-                    <form method="post">
+                    <form id="screenshotForm">
+                        @Html.AntiForgeryToken()
                         <div class="mb-3">
                             <label for="url" class="form-label">Enter URL:</label>
                             <input type="url" class="form-control" id="url" name="Url"
@@ -32,42 +33,173 @@
                         </div>
 
                         <div class="d-grid">
-                            <button type="submit" class="btn btn-primary btn-lg">Capture Screenshot</button>
+                            <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                                <span id="btnText">Capture Screenshot</span>
+                                <span id="btnSpinner" class="spinner-border spinner-border-sm ms-2" role="status" aria-hidden="true" style="display: none;"></span>
+                            </button>
                         </div>
                     </form>
                 </div>
             </div>
 
-            @if (!string.IsNullOrEmpty(Model.ScreenshotPath))
-            {
-                <div class="card mt-4">
-                    <div class="card-header">
-                        <h5 class="mb-0">Screenshot Result</h5>
-                    </div>
-                    <div class="card-body text-center">
-                        <img src="@Model.ScreenshotPath" alt="Website Screenshot"
-                             class="img-fluid rounded shadow" style="max-width: 100%; height: auto;">
-                        <div class="mt-3">
-                            <a href="@Model.ScreenshotPath" target="_blank" class="btn btn-outline-primary me-2">
-                                View Full Size
-                            </a>
-                            <a href="@Model.ScreenshotPath" download class="btn btn-outline-secondary">
-                                Download
-                            </a>
-                        </div>
+            <!-- Loading Message -->
+            <div id="loadingMessage" class="alert alert-info mt-3" style="display: none;">
+                <div class="d-flex align-items-center">
+                    <div class="spinner-border spinner-border-sm me-3" role="status" aria-hidden="true"></div>
+                    <div>
+                        <strong id="loadingText">Capturing screenshot...</strong>
+                        <br>
+                        <small id="loadingSubtext">This may take a moment</small>
                     </div>
                 </div>
-            }
+            </div>
 
-            @if (!ModelState.IsValid)
-            {
-                <div class="alert alert-danger mt-3">
-                    @foreach (var error in ModelState.Values.SelectMany(v => v.Errors))
-                    {
-                        <p class="mb-0">@error.ErrorMessage</p>
-                    }
+            <!-- Browser Download Message -->
+            <div id="browserDownloadMessage" class="alert alert-warning mt-3" style="display: none;">
+                <div class="d-flex align-items-center">
+                    <div class="spinner-border spinner-border-sm me-3" role="status" aria-hidden="true"></div>
+                    <div>
+                        <strong>Downloading browser binaries...</strong>
+                        <br>
+                        <small>This is a one-time setup that may take several minutes. Please be patient.</small>
+                    </div>
                 </div>
-            }
+            </div>
+
+            <!-- Screenshot Result -->
+            <div id="screenshotResult" class="card mt-4" style="display: none;">
+                <div class="card-header">
+                    <h5 class="mb-0">Screenshot Result</h5>
+                </div>
+                <div class="card-body text-center">
+                    <img id="screenshotImage" src="" alt="Website Screenshot"
+                         class="img-fluid rounded shadow" style="max-width: 100%; height: auto;">
+                    <div class="mt-3">
+                        <a id="viewFullSize" href="" target="_blank" class="btn btn-outline-primary me-2">
+                            View Full Size
+                        </a>
+                        <a id="downloadImage" href="" download class="btn btn-outline-secondary">
+                            Download
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error Message -->
+            <div id="errorMessage" class="alert alert-danger mt-3" style="display: none;">
+                <p id="errorText" class="mb-0"></p>
+            </div>
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('screenshotForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const btnText = document.getElementById('btnText');
+    const btnSpinner = document.getElementById('btnSpinner');
+    const loadingMessage = document.getElementById('loadingMessage');
+    const browserDownloadMessage = document.getElementById('browserDownloadMessage');
+    const screenshotResult = document.getElementById('screenshotResult');
+    const errorMessage = document.getElementById('errorMessage');
+    const loadingText = document.getElementById('loadingText');
+    const loadingSubtext = document.getElementById('loadingSubtext');
+    
+    // Check if browsers are installed on page load
+    const browsersInstalled = @Json.Serialize(Model.AreBrowsersInstalled);
+    
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const url = document.getElementById('url').value.trim();
+        if (!url) {
+            showError('Please enter a valid URL.');
+            return;
+        }
+        
+        // Show loading state
+        setLoadingState(true);
+        
+        // Show appropriate loading message
+        if (!browsersInstalled) {
+            showBrowserDownloadMessage();
+        } else {
+            showLoadingMessage();
+        }
+        
+        try {
+            const formData = new FormData();
+            formData.append('url', url);
+            
+            const response = await fetch('/api/screenshot', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Update the result with the image
+                    document.getElementById('screenshotImage').src = result.imagePath;
+                    document.getElementById('viewFullSize').href = result.viewUrl;
+                    document.getElementById('downloadImage').href = result.downloadUrl;
+                    
+                    showScreenshotResult();
+                } else {
+                    showError(result.error || 'Failed to capture screenshot. Please try again.');
+                }
+            } else {
+                showError('Failed to capture screenshot. Please try again.');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showError('An error occurred while capturing the screenshot. Please try again.');
+        } finally {
+            setLoadingState(false);
+            hideAllMessages();
+        }
+    });
+    
+    function setLoadingState(loading) {
+        submitBtn.disabled = loading;
+        if (loading) {
+            btnText.textContent = 'Capturing...';
+            btnSpinner.style.display = 'inline-block';
+        } else {
+            btnText.textContent = 'Capture Screenshot';
+            btnSpinner.style.display = 'none';
+        }
+    }
+    
+    function showLoadingMessage() {
+        hideAllMessages();
+        loadingText.textContent = 'Capturing screenshot...';
+        loadingSubtext.textContent = 'This may take a moment';
+        loadingMessage.style.display = 'block';
+    }
+    
+    function showBrowserDownloadMessage() {
+        hideAllMessages();
+        browserDownloadMessage.style.display = 'block';
+    }
+    
+    function showScreenshotResult() {
+        hideAllMessages();
+        screenshotResult.style.display = 'block';
+    }
+    
+    function showError(message) {
+        hideAllMessages();
+        document.getElementById('errorText').textContent = message;
+        errorMessage.style.display = 'block';
+    }
+    
+    function hideAllMessages() {
+        loadingMessage.style.display = 'none';
+        browserDownloadMessage.style.display = 'none';
+        errorMessage.style.display = 'none';
+    }
+});
+</script>

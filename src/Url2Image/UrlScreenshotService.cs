@@ -6,7 +6,7 @@ namespace Url2Image;
 /// <summary>
 /// Service for capturing screenshots of URLs using Playwright.
 /// </summary>
-internal sealed class UrlScreenshotService : IUrlScreenshotService, IAsyncDisposable
+public sealed class UrlScreenshotService : IUrlScreenshotService, IAsyncDisposable
 {
     private readonly Url2ImageOptions _options;
     private readonly SemaphoreSlim _initLock = new(1, 1);
@@ -150,32 +150,65 @@ internal sealed class UrlScreenshotService : IUrlScreenshotService, IAsyncDispos
 
     /// <summary>
     /// Checks whether Playwright browsers are installed on the system.
+    /// This is a static method that can be called independently.
     /// </summary>
-    private bool CheckBrowsersInstalled()
+    public static bool AreBrowsersInstalledStatic()
     {
         try
         {
-            // Try to get the browser path - if browsers aren't installed, this will throw
+            // Check the standard Playwright installation directory
             var playwrightDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ms-playwright");
 
-            var chromiumDir = Path.Combine(playwrightDir, "chromium-*" + Path.DirectorySeparatorChar);
-            if (Directory.Exists(playwrightDir) &&
-                Directory.GetDirectories(playwrightDir, "chromium-*", SearchOption.TopDirectoryOnly).Any())
+            if (Directory.Exists(playwrightDir))
             {
-                return true;
+                // Check for any chromium installation
+                var chromiumDirs = Directory.GetDirectories(playwrightDir, "chromium-*", SearchOption.TopDirectoryOnly);
+                if (chromiumDirs.Any())
+                {
+                    // Verify the chromium directory actually contains the browser executable
+                    foreach (var chromiumDir in chromiumDirs)
+                    {
+                        var chromeExe = Path.Combine(chromiumDir, "chrome-win", "chrome.exe");
+                        if (File.Exists(chromeExe))
+                        {
+                            return true;
+                        }
+                    }
+                }
             }
 
-            // Fallback: try to run playwright install --dry-run
-            var exitCode = Microsoft.Playwright.Program.Main(new[] { "install", _options.BrowserChannel, "--dry-run" });
-            return exitCode == 0;
+            // Also check for system-wide installation
+            var systemPlaywrightDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".cache", "ms-playwright");
+
+            if (Directory.Exists(systemPlaywrightDir))
+            {
+                var chromiumDirs = Directory.GetDirectories(systemPlaywrightDir, "chromium-*", SearchOption.TopDirectoryOnly);
+                foreach (var chromiumDir in chromiumDirs)
+                {
+                    var chromeExe = Path.Combine(chromiumDir, "chrome-win", "chrome.exe");
+                    if (File.Exists(chromeExe))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
         catch
         {
             return false;
         }
     }
+
+    /// <summary>
+    /// Checks whether Playwright browsers are installed on the system.
+    /// </summary>
+    private bool CheckBrowsersInstalled() => AreBrowsersInstalledStatic();
 
     private static void EnsureHttpOrHttps(string url)
     {
