@@ -4,27 +4,27 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <Description>URL→Image (full‑page) screenshots for .NET 9 using Playwright. Simple DI service returning PNG/JPEG as Stream.</Description>
+    <Description>URL to Image (full‑page) screenshots for .NET using Playwright. Simple DI service returning PNG/JPEG</Description>
     <PackageId>Url2Image</PackageId>
     <PackageVersion>1.0.0</PackageVersion>
-    <Authors>Url2Image Contributors</Authors>
-    <RepositoryUrl>https://github.com/yourorg/Url2Image</RepositoryUrl>
+    <Authors>Lee Messenger</Authors>
+    <RepositoryUrl>https://github.com/YodasMyDad/Url2Image</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <IncludeSymbols>false</IncludeSymbols>
     <PackageTags>screenshot;url;image;playwright;png;jpeg;web;automation</PackageTags>
-    <PackageProjectUrl>https://github.com/yourorg/Url2Image</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/YodasMyDad/Url2Image</PackageProjectUrl>
     <PackageReleaseNotes>Initial release with full-page screenshot capture using Playwright.</PackageReleaseNotes>
-    <Copyright>Copyright © $([System.DateTime]::Now.Year) Url2Image Contributors</Copyright>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.9" />
     <PackageReference Include="Microsoft.Playwright" Version="1.*" />
   </ItemGroup>
+    <ItemGroup>
+        <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
   <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="/" />
     <None Include="build\**" Pack="true" PackagePath="build\" />
   </ItemGroup>
 </Project>

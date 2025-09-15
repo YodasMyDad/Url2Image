@@ -1,6 +1,10 @@
-# Url2Image — URL → Full‑page PNG/JPEG for .NET 9
+# Url2Image = URL → Full‑page PNG/JPEG for .NET
 
-Tiny DI‑friendly service that turns any **URL** into a **full‑page screenshot** using [Microsoft.Playwright]. Works on Windows, Linux, macOS. Default **PNG**, optional **JPEG** with quality. Returns a **Stream** with helpers to save to disk.
+Tiny service that turns any **URL** into a **full‑page screenshot** using [Microsoft.Playwright]. Works on Windows, Linux, macOS. Default **PNG**, optional **JPEG** with quality. Returns a **Stream** with helpers to save to disk.
+
+[![NuGet](https://img.shields.io/nuget/v/Url2Image.svg)](https://www.nuget.org/packages/Url2Image/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![.NET](https://img.shields.io/badge/.NET-9.0-blue.svg)](https://dotnet.microsoft.com/)
 
 ## Install
 

@@ -1,0 +1,5 @@
+# Step 1: Build first (creates the DLLs)
+dotnet build src/Url2Image/Url2Image.csproj -c Release
+
+# Step 2: Then pack (creates the NuGet package)
+dotnet pack src/Url2Image/Url2Image.csproj -c Release --output nupkgs
